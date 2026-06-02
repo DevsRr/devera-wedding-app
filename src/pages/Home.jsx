@@ -39,7 +39,7 @@ const Home = () => {
             {[
               { icon: Calendar, label: 'Date', value: 'June 3, 2026' },
               { icon: Clock, label: 'Time', value: '4:00 PM' },
-              { icon: MapPin, label: 'Venue', value: 'To be announced' },
+              { icon: MapPin, label: 'Venue', value: 'Market Bistro' },
             ].map((item, index) => {
               const Icon = item.icon
               return (
