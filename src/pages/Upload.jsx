@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Camera, Upload, X, Check, Heart, Sparkles, User, MessageSquare } from 'lucide-react'
 import { savePhoto, signInAnonymous } from '../firebase'
@@ -12,10 +12,32 @@ const UploadPage = () => {
   const [message, setMessage] = useState('')
   const [uploadProgress, setUploadProgress] = useState(0)
   const [showSuccess, setShowSuccess] = useState(false)
+  const [isCameraOpen, setIsCameraOpen] = useState(false)
+  const [cameraStream, setCameraStream] = useState(null)
+  
   const fileInputRef = useRef(null)
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
-  const [isCameraOpen, setIsCameraOpen] = useState(false)
+  const streamRef = useRef(null)
+
+  // Attach stream to video element when camera opens
+  useEffect(() => {
+    if (isCameraOpen && videoRef.current && cameraStream) {
+      videoRef.current.srcObject = cameraStream
+      videoRef.current.play().catch((err) => {
+        console.error('Video play error:', err)
+      })
+    }
+  }, [isCameraOpen, cameraStream])
+
+  // Cleanup camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+      }
+    }
+  }, [])
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0]
@@ -37,13 +59,18 @@ const UploadPage = () => {
   const openCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' },
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
         audio: false 
       })
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        setIsCameraOpen(true)
-      }
+      
+      streamRef.current = stream
+      setCameraStream(stream)
+      setIsCameraOpen(true)
+      
     } catch (err) {
       toast.error('Could not access camera. Please use file upload instead.')
       console.error('Camera error:', err)
@@ -54,32 +81,26 @@ const UploadPage = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current
       const canvas = canvasRef.current
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+      canvas.width = video.videoWidth || 1920
+      canvas.height = video.videoHeight || 1080
       const ctx = canvas.getContext('2d')
-      ctx.drawImage(video, 0, 0)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
       canvas.toBlob((blob) => {
         const file = new File([blob], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' })
         setSelectedImage(file)
         setPreviewUrl(URL.createObjectURL(file))
-        setIsCameraOpen(false)
-
-        const stream = video.srcObject
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop())
-        }
+        closeCamera()
       }, 'image/jpeg', 0.9)
     }
   }
 
   const closeCamera = () => {
-    if (videoRef.current) {
-      const stream = videoRef.current.srcObject
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop())
-      }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
     }
+    setCameraStream(null)
     setIsCameraOpen(false)
   }
 
@@ -208,22 +229,31 @@ const UploadPage = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-50 bg-black flex flex-col"
+              style={{ height: '100vh', height: '100dvh' }}
             >
-              <div className="flex-1 relative">
+              <div className="flex-1 relative" style={{ minHeight: '50vh' }}>
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
-                  className="w-full h-full object-cover"
+                  muted
+                  onLoadedMetadata={(e) => {
+                    console.log('Video metadata loaded:', e.target.videoWidth, 'x', e.target.videoHeight)
+                    e.target.play().catch(console.error)
+                  }}
+                  onPlay={() => console.log('Video is playing')}
+                  onError={(e) => console.error('Video error:', e)}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  style={{ backgroundColor: '#000' }}
                 />
                 <button
                   onClick={closeCamera}
-                  className="absolute top-4 right-4 p-2 bg-black/50 rounded-full text-white"
+                  className="absolute top-4 right-4 p-2 bg-black/50 rounded-full text-white z-10"
                 >
                   <X className="w-6 h-6" />
                 </button>
               </div>
-              <div className="p-6 flex justify-center">
+              <div className="p-6 flex justify-center bg-black">
                 <button
                   onClick={capturePhoto}
                   className="w-16 h-16 bg-white rounded-full border-4 border-champagne flex items-center justify-center"
