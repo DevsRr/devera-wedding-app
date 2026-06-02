@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Heart, User, MessageSquare, Images, RefreshCw } from 'lucide-react'
+import { Heart, User, MessageSquare, Image, RefreshCw } from 'lucide-react'
 import { getPhotos } from '../firebase'
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
@@ -171,7 +171,7 @@ const Gallery = () => {
             animate={{ opacity: 1 }}
             className="text-center py-20"
           >
-            <Images className="w-16 h-16 text-warm-gray mx-auto mb-4" />
+            <Image className="w-16 h-16 text-warm-gray mx-auto mb-4" />
             <h3 className="font-serif text-xl text-soft-gray mb-2">No photos yet</h3>
             <p className="text-soft-gray/50">Be the first to upload a photo!</p>
           </motion.div>

@@ -10,6 +10,7 @@ const VideoGenerator = () => {
   const [loopAudio, setLoopAudio] = useState(true)
   const [allPhotos, setAllPhotos] = useState([])
   const [isLoadingPhotos, setIsLoadingPhotos] = useState(true)
+  const [musicDuration, setMusicDuration] = useState(180) // default 3 min
   const canvasRef = useRef(null)
   const videoRef = useRef(null)
 
@@ -30,13 +31,23 @@ const VideoGenerator = () => {
     '/images/couple-10.jpg',
   ]
 
+  // Get actual music duration
+  useEffect(() => {
+    const audio = new Audio(MUSIC_URL)
+    audio.addEventListener('loadedmetadata', () => {
+      setMusicDuration(audio.duration)
+    })
+    audio.addEventListener('error', () => {
+      console.warn('Could not load music metadata, using default 180s')
+    })
+  }, [])
+
   // Fetch ALL photos from Firestore (guest uploads + couple photos)
   useEffect(() => {
     setIsLoadingPhotos(true)
     const unsubscribe = getPhotos((fetchedPhotos) => {
-      // Combine couple photos with guest uploads
       const guestPhotos = fetchedPhotos
-        .filter(p => p.imageUrl) // Only include photos with valid URLs
+        .filter(p => p.imageUrl)
         .map(p => ({
           src: p.imageUrl,
           type: 'guest',
@@ -51,7 +62,6 @@ const VideoGenerator = () => {
         message: ''
       }))
 
-      // Combine: couple photos first, then guest uploads
       const combined = [...couplePhotoObjects, ...guestPhotos]
       setAllPhotos(combined)
       setIsLoadingPhotos(false)
@@ -60,8 +70,24 @@ const VideoGenerator = () => {
     return () => unsubscribe()
   }, [])
 
-  const photoDuration = 4000 // 4 seconds per photo
+  // DYNAMIC: Calculate photo duration based on music length
+  const getPhotoDuration = () => {
+    if (allPhotos.length === 0) return 4000
+    // Give each photo equal time, with 1.5s for crossfade overlap
+    // Reserve 3s for intro title
+    const availableTime = (musicDuration * 1000) - 3000
+    const transitionOverlap = 1500
+    const perPhoto = availableTime / allPhotos.length
+    return Math.max(3000, Math.min(8000, perPhoto + transitionOverlap))
+  }
+
+  const photoDuration = getPhotoDuration()
   const totalVideoDuration = allPhotos.length * photoDuration
+
+  // Easing function for smooth transitions
+  const easeInOutCubic = (t) => {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+  }
 
   const generateVideo = async () => {
     if (allPhotos.length === 0) {
@@ -81,7 +107,7 @@ const VideoGenerator = () => {
       canvas.width = width
       canvas.height = height
 
-      // Load ALL images (from URLs)
+      // Load ALL images
       const images = await Promise.all(
         allPhotos.map((photo) => {
           return new Promise((resolve, reject) => {
@@ -90,14 +116,13 @@ const VideoGenerator = () => {
             img.onload = () => resolve(img)
             img.onerror = () => {
               console.warn(`Failed to load image: ${photo.src}`)
-              resolve(null) // Skip failed images
+              resolve(null)
             }
             img.src = photo.src
           })
         })
       )
 
-      // Filter out failed images
       const validImages = images.filter(img => img !== null)
       const validPhotos = allPhotos.filter((_, i) => images[i] !== null)
 
@@ -177,8 +202,9 @@ const VideoGenerator = () => {
 
       mediaRecorder.start(100)
 
-      // Animation loop
+      // Animation loop with smooth crossfade
       const startTime = Date.now()
+      const transitionDuration = 1500 // 1.5s crossfade
 
       const animate = () => {
         const elapsed = Date.now() - startTime
@@ -190,58 +216,101 @@ const VideoGenerator = () => {
           return
         }
 
+        // Clear canvas with black background (for letterbox effect)
+        ctx.fillStyle = '#0a0a0a'
+        ctx.fillRect(0, 0, width, height)
+
         const currentPhotoIndex = Math.floor(elapsed / photoDuration)
         const nextPhotoIndex = Math.min(currentPhotoIndex + 1, validImages.length - 1)
         const photoElapsed = elapsed % photoDuration
-        const transitionDuration = 1000
-        const transitionProgress = Math.min(photoElapsed / transitionDuration, 1)
 
-        // Clear canvas
-        ctx.fillStyle = '#1a1a1a'
-        ctx.fillRect(0, 0, width, height)
+        // Calculate crossfade progress with easing
+        let fadeProgress = 0
+        if (photoElapsed > (photoDuration - transitionDuration)) {
+          const fadeStart = photoDuration - transitionDuration
+          const rawProgress = (photoElapsed - fadeStart) / transitionDuration
+          fadeProgress = easeInOutCubic(rawProgress)
+        }
 
-        // Draw current photo with Ken Burns
+        // ===== DRAW CURRENT PHOTO (fading out) =====
         const currentImg = validImages[currentPhotoIndex]
-        const scale = 1 + (photoElapsed / photoDuration) * 0.1
+        const currentPhotoTime = currentPhotoIndex * photoDuration
+        const currentPhotoElapsed = elapsed - currentPhotoTime
+        const currentKenBurnsProgress = Math.min(currentPhotoElapsed / photoDuration, 1)
 
-        ctx.globalAlpha = 1 - transitionProgress * 0.5
-        drawImageCover(ctx, currentImg, width, height, scale)
+        ctx.globalAlpha = 1 - fadeProgress
+        drawImageContain(ctx, currentImg, width, height, currentKenBurnsProgress)
 
-        // Draw next photo during transition
-        if (transitionProgress > 0.5 && nextPhotoIndex !== currentPhotoIndex) {
+        // ===== DRAW NEXT PHOTO (fading in) =====
+        if (fadeProgress > 0 && nextPhotoIndex !== currentPhotoIndex) {
           const nextImg = validImages[nextPhotoIndex]
-          const nextScale = 1.1 - (transitionProgress - 0.5) * 0.1
-          ctx.globalAlpha = (transitionProgress - 0.5) * 2
-          drawImageCover(ctx, nextImg, width, height, nextScale)
+          ctx.globalAlpha = fadeProgress
+          drawImageContain(ctx, nextImg, width, height, 0) // next photo starts fresh
         }
 
         ctx.globalAlpha = 1
 
-        // Title overlay (first 3 seconds)
-        if (elapsed < 3000) {
-          const titleAlpha = elapsed < 1000 ? elapsed / 1000 : elapsed > 2000 ? (3000 - elapsed) / 1000 : 1
-          ctx.fillStyle = `rgba(0, 0, 0, ${titleAlpha * 0.4})`
+        // ===== TITLE OVERLAY (first 4 seconds) =====
+        if (elapsed < 4000) {
+          const titleAlpha = elapsed < 1000 
+            ? easeInOutCubic(elapsed / 1000) 
+            : elapsed > 3000 
+              ? 1 - easeInOutCubic((elapsed - 3000) / 1000) 
+              : 1
+
+          // Gradient overlay
+          const gradient = ctx.createLinearGradient(0, 0, 0, height)
+          gradient.addColorStop(0, `rgba(0, 0, 0, ${titleAlpha * 0.5})`)
+          gradient.addColorStop(0.5, `rgba(0, 0, 0, ${titleAlpha * 0.3})`)
+          gradient.addColorStop(1, `rgba(0, 0, 0, ${titleAlpha * 0.5})`)
+          ctx.fillStyle = gradient
           ctx.fillRect(0, 0, width, height)
 
           ctx.fillStyle = `rgba(255, 255, 255, ${titleAlpha})`
-          ctx.font = 'bold 48px "Playfair Display", Georgia, serif'
+          ctx.font = 'bold 56px "Playfair Display", Georgia, serif'
           ctx.textAlign = 'center'
-          ctx.fillText('Mr & Mrs De Vera', width / 2, height / 2 - 20)
+          ctx.shadowColor = 'rgba(0,0,0,0.5)'
+          ctx.shadowBlur = 20
+          ctx.fillText('Mr & Mrs De Vera', width / 2, height / 2 - 25)
+          ctx.shadowBlur = 0
 
-          ctx.font = '24px Inter, sans-serif'
+          ctx.font = '300 22px Inter, sans-serif'
           ctx.fillStyle = `rgba(230, 201, 168, ${titleAlpha})`
-          ctx.fillText('June 3, 2026', width / 2, height / 2 + 30)
+          ctx.letterSpacing = '4px'
+          ctx.fillText('JUNE 3, 2026', width / 2, height / 2 + 35)
+          ctx.letterSpacing = '0'
         }
 
-        // Photo counter overlay
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
-        ctx.font = '16px Inter, sans-serif'
+        // ===== PHOTO COUNTER =====
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)'
+        ctx.font = '14px Inter, sans-serif'
         ctx.textAlign = 'right'
-        ctx.fillText(`${currentPhotoIndex + 1} / ${validImages.length}`, width - 20, 30)
+        ctx.fillText(`${currentPhotoIndex + 1} / ${validImages.length}`, width - 30, 35)
 
-        // Progress bar
-        ctx.fillStyle = 'rgba(230, 201, 168, 0.8)'
-        ctx.fillRect(20, height - 10, (width - 40) * (currentProgress / 100), 4)
+        // ===== PROGRESS BAR =====
+        const barWidth = width - 60
+        const barHeight = 3
+        const barY = height - 20
+        
+        // Background
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'
+        ctx.fillRect(30, barY, barWidth, barHeight)
+        
+        // Progress
+        ctx.fillStyle = 'rgba(230, 201, 168, 0.9)'
+        ctx.fillRect(30, barY, barWidth * (currentProgress / 100), barHeight)
+
+        // ===== GUEST NAME OVERLAY (for guest photos) =====
+        const currentPhotoData = validPhotos[currentPhotoIndex]
+        if (currentPhotoData?.type === 'guest' && currentPhotoData.guestName && fadeProgress < 0.8) {
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.4 * (1 - fadeProgress)})`
+          ctx.fillRect(0, height - 70, width, 70)
+          
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.9 * (1 - fadeProgress)})`
+          ctx.font = '16px Inter, sans-serif'
+          ctx.textAlign = 'left'
+          ctx.fillText(`Captured by ${currentPhotoData.guestName}`, 30, height - 35)
+        }
 
         requestAnimationFrame(animate)
       }
@@ -254,24 +323,34 @@ const VideoGenerator = () => {
     }
   }
 
-  const drawImageCover = (ctx, img, width, height, scale = 1) => {
+  // ===== ORIGINAL PHOTO LOOK: object-fit: contain =====
+  // Shows full photo with black letterbox bars (no cropping)
+  const drawImageContain = (ctx, img, width, height, kenBurnsProgress = 0) => {
     const imgRatio = img.width / img.height
     const canvasRatio = width / height
+    
     let drawWidth, drawHeight, offsetX, offsetY
+    let scale = 1 + kenBurnsProgress * 0.08 // Subtle zoom: 1.0 -> 1.08
 
     if (imgRatio > canvasRatio) {
-      drawHeight = height * scale
-      drawWidth = drawHeight * imgRatio
-      offsetX = (width - drawWidth) / 2
-      offsetY = (height - drawHeight) / 2
-    } else {
+      // Image is wider than canvas - fit to width
       drawWidth = width * scale
       drawHeight = drawWidth / imgRatio
       offsetX = (width - drawWidth) / 2
       offsetY = (height - drawHeight) / 2
+    } else {
+      // Image is taller than canvas - fit to height
+      drawHeight = height * scale
+      drawWidth = drawHeight * imgRatio
+      offsetX = (width - drawWidth) / 2
+      offsetY = (height - drawHeight) / 2
     }
 
-    ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
+    // Subtle pan during Ken Burns (very gentle)
+    const panX = Math.sin(kenBurnsProgress * Math.PI) * 10
+    const panY = Math.cos(kenBurnsProgress * Math.PI) * 5
+
+    ctx.drawImage(img, offsetX + panX, offsetY + panY, drawWidth, drawHeight)
   }
 
   const downloadVideo = () => {
@@ -323,7 +402,7 @@ const VideoGenerator = () => {
             </div>
             <div className="w-px h-10 bg-warm-gray" />
             <div className="text-center">
-              <p className="font-serif text-2xl text-champagne">4s</p>
+              <p className="font-serif text-2xl text-champagne">{Math.round(photoDuration / 100) / 10}s</p>
               <p className="text-soft-gray/50 text-xs">Per Photo</p>
             </div>
           </div>
@@ -512,7 +591,8 @@ const VideoGenerator = () => {
           <p className="text-soft-gray/40 text-sm">
             Music: "Can't Help Falling In Love" (Instrumental) | 
             Video includes {allPhotos.length} photos | 
-            Length: {Math.round(totalVideoDuration / 1000)} seconds
+            Length: {Math.round(totalVideoDuration / 1000)} seconds | 
+            Smooth crossfade transitions
           </p>
         </motion.div>
       </div>
