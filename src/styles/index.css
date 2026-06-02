@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #FAF9F6;
+    color: #4A4A4A;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+@layer components {
+  .glass-card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(230, 201, 168, 0.3);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #E6C9A8 0%, #C9A9B6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .btn-primary {
+    @apply px-8 py-4 bg-champagne text-white font-medium rounded-full 
+           transition-all duration-300 hover:shadow-lg hover:shadow-champagne/30 
+           hover:scale-105 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply px-8 py-4 bg-white text-soft-gray font-medium rounded-full 
+           border border-warm-gray transition-all duration-300 
+           hover:shadow-lg hover:border-champagne hover:text-champagne;
+  }
+
+  .section-padding {
+    @apply px-4 sm:px-6 lg:px-8 xl:px-12;
+  }
+}
+
+@layer utilities {
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+  .animation-delay-400 {
+    animation-delay: 400ms;
+  }
+  .animation-delay-600 {
+    animation-delay: 600ms;
+  }
+}
