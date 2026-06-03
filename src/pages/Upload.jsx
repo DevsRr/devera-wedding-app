@@ -1,12 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, Upload, X, Check, Heart, Sparkles, User, MessageSquare } from 'lucide-react'
+import { Camera, Upload, X, Check, Heart, Sparkles, User, MessageSquare, Plus } from 'lucide-react'
 import { savePhoto, signInAnonymous } from '../firebase'
 import toast from 'react-hot-toast'
 
 const UploadPage = () => {
-  const [selectedImage, setSelectedImage] = useState(null)
-  const [previewUrl, setPreviewUrl] = useState(null)
+  const [selectedImages, setSelectedImages] = useState([]) // Array of {file, previewUrl}
   const [isUploading, setIsUploading] = useState(false)
   const [guestName, setGuestName] = useState('')
   const [message, setMessage] = useState('')
@@ -20,7 +19,6 @@ const UploadPage = () => {
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
 
-  // Attach stream to video element when camera opens
   useEffect(() => {
     if (isCameraOpen && videoRef.current && cameraStream) {
       videoRef.current.srcObject = cameraStream
@@ -30,30 +28,50 @@ const UploadPage = () => {
     }
   }, [isCameraOpen, cameraStream])
 
-  // Cleanup camera stream on unmount
   useEffect(() => {
     return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
       }
+      selectedImages.forEach(img => URL.revokeObjectURL(img.previewUrl))
     }
   }, [])
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0]
-    if (file) {
+  const addImages = (files) => {
+    const validFiles = Array.from(files).filter(file => {
       if (file.size > 5 * 1024 * 1024) {
-        toast.error('File size must be less than 5MB')
-        return
+        toast.error(`${file.name} exceeds 5MB limit`)
+        return false
       }
       if (!file.type.startsWith('image/')) {
-        toast.error('Please select an image file')
-        return
+        toast.error(`${file.name} is not an image`)
+        return false
       }
-      setSelectedImage(file)
-      const url = URL.createObjectURL(file)
-      setPreviewUrl(url)
+      return true
+    })
+
+    const newImages = validFiles.map(file => ({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      id: `${Date.now()}-${Math.random()}`,
+    }))
+
+    setSelectedImages(prev => [...prev, ...newImages])
+  }
+
+  const handleFileSelect = (e) => {
+    if (e.target.files?.length) {
+      addImages(e.target.files)
+      e.target.value = '' // Reset so same files can be re-selected
     }
+  }
+
+  const removeImage = (id) => {
+    setSelectedImages(prev => {
+      const removed = prev.find(img => img.id === id)
+      if (removed) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter(img => img.id !== id)
+    })
   }
 
   const openCamera = async () => {
@@ -66,11 +84,9 @@ const UploadPage = () => {
         },
         audio: false 
       })
-      
       streamRef.current = stream
       setCameraStream(stream)
       setIsCameraOpen(true)
-      
     } catch (err) {
       toast.error('Could not access camera. Please use file upload instead.')
       console.error('Camera error:', err)
@@ -88,8 +104,7 @@ const UploadPage = () => {
 
       canvas.toBlob((blob) => {
         const file = new File([blob], `capture-${Date.now()}.jpg`, { type: 'image/jpeg' })
-        setSelectedImage(file)
-        setPreviewUrl(URL.createObjectURL(file))
+        addImages([file])
         closeCamera()
       }, 'image/jpeg', 0.9)
     }
@@ -105,8 +120,8 @@ const UploadPage = () => {
   }
 
   const handleUpload = async () => {
-    if (!selectedImage) {
-      toast.error('Please select a photo first')
+    if (selectedImages.length === 0) {
+      toast.error('Please select at least one photo')
       return
     }
 
@@ -115,21 +130,22 @@ const UploadPage = () => {
 
     try {
       await signInAnonymous()
-      setUploadProgress(30)
 
-      await savePhoto(selectedImage, {
-        guestName: guestName || 'Anonymous Guest',
-        message: message || '',
-      })
+      for (let i = 0; i < selectedImages.length; i++) {
+        await savePhoto(selectedImages[i].file, {
+          guestName: guestName || 'Anonymous Guest',
+          message: message || '',
+        })
+        setUploadProgress(Math.round(((i + 1) / selectedImages.length) * 100))
+      }
 
-      setUploadProgress(100)
       setShowSuccess(true)
       triggerConfetti()
-      toast.success('Photo uploaded successfully!')
+      toast.success(`${selectedImages.length} photo${selectedImages.length > 1 ? 's' : ''} uploaded successfully!`)
 
       setTimeout(() => {
-        setSelectedImage(null)
-        setPreviewUrl(null)
+        selectedImages.forEach(img => URL.revokeObjectURL(img.previewUrl))
+        setSelectedImages([])
         setGuestName('')
         setMessage('')
         setShowSuccess(false)
@@ -178,13 +194,11 @@ const UploadPage = () => {
     let frame = 0
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-
       particles.forEach((p) => {
         p.x += p.vx
         p.y += p.vy
         p.vy += 0.5
         p.rotation += p.rotationSpeed
-
         ctx.save()
         ctx.translate(p.x, p.y)
         ctx.rotate((p.rotation * Math.PI) / 180)
@@ -192,7 +206,6 @@ const UploadPage = () => {
         ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size)
         ctx.restore()
       })
-
       frame++
       if (frame < 120) {
         requestAnimationFrame(animate)
@@ -200,9 +213,10 @@ const UploadPage = () => {
         document.body.removeChild(canvas)
       }
     }
-
     animate()
   }
+
+  const hasImages = selectedImages.length > 0
 
   return (
     <div className="min-h-screen bg-ivory pt-20 pb-12">
@@ -222,6 +236,7 @@ const UploadPage = () => {
           </p>
         </motion.div>
 
+        {/* Camera overlay */}
         <AnimatePresence>
           {isCameraOpen && (
             <motion.div
@@ -238,11 +253,8 @@ const UploadPage = () => {
                   playsInline
                   muted
                   onLoadedMetadata={(e) => {
-                    console.log('Video metadata loaded:', e.target.videoWidth, 'x', e.target.videoHeight)
                     e.target.play().catch(console.error)
                   }}
-                  onPlay={() => console.log('Video is playing')}
-                  onError={(e) => console.error('Video error:', e)}
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ backgroundColor: '#000' }}
                 />
@@ -272,129 +284,158 @@ const UploadPage = () => {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="glass-card rounded-3xl p-6 sm:p-8 shadow-xl"
         >
-          {!selectedImage ? (
-            <div className="space-y-4">
-              <button
-                onClick={openCamera}
-                className="w-full py-6 bg-gradient-to-r from-champagne/20 to-blush/20 rounded-2xl border-2 border-dashed border-champagne/40 hover:border-champagne transition-colors flex flex-col items-center gap-3 group"
-              >
-                <div className="w-14 h-14 bg-champagne/10 rounded-full flex items-center justify-center group-hover:bg-champagne/20 transition-colors">
-                  <Camera className="w-7 h-7 text-champagne" />
-                </div>
-                <span className="text-soft-gray font-medium">Take a Photo</span>
-              </button>
-
-              <div className="flex items-center gap-4">
-                <div className="flex-1 h-px bg-warm-gray" />
-                <span className="text-soft-gray/40 text-sm">or</span>
-                <div className="flex-1 h-px bg-warm-gray" />
-              </div>
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full py-6 bg-gradient-to-r from-blush/20 to-champagne/20 rounded-2xl border-2 border-dashed border-champagne/40 hover:border-champagne transition-colors flex flex-col items-center gap-3 group"
-              >
-                <div className="w-14 h-14 bg-blush/50 rounded-full flex items-center justify-center group-hover:bg-blush transition-colors">
-                  <Upload className="w-7 h-7 text-champagne" />
-                </div>
-                <span className="text-soft-gray font-medium">Upload from Device</span>
-                <span className="text-soft-gray/40 text-xs">JPG, PNG up to 5MB</span>
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="relative rounded-2xl overflow-hidden">
-                <img
-                  src={previewUrl}
-                  alt="Preview"
-                  className="w-full aspect-[4/3] object-cover"
-                />
+          {/* Upload buttons — always visible so user can add more */}
+          <div className="space-y-4">
+            {!hasImages && (
+              <>
                 <button
-                  onClick={() => {
-                    setSelectedImage(null)
-                    setPreviewUrl(null)
-                  }}
-                  className="absolute top-3 right-3 p-2 bg-black/50 rounded-full text-white hover:bg-black/70 transition-colors"
+                  onClick={openCamera}
+                  className="w-full py-6 bg-gradient-to-r from-champagne/20 to-blush/20 rounded-2xl border-2 border-dashed border-champagne/40 hover:border-champagne transition-colors flex flex-col items-center gap-3 group"
                 >
-                  <X className="w-5 h-5" />
+                  <div className="w-14 h-14 bg-champagne/10 rounded-full flex items-center justify-center group-hover:bg-champagne/20 transition-colors">
+                    <Camera className="w-7 h-7 text-champagne" />
+                  </div>
+                  <span className="text-soft-gray font-medium">Take a Photo</span>
                 </button>
-              </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="flex items-center gap-2 text-soft-gray text-sm font-medium mb-2">
-                    <User className="w-4 h-4 text-champagne" />
-                    Your Name (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={guestName}
-                    onChange={(e) => setGuestName(e.target.value)}
-                    placeholder="Enter your name"
-                    className="w-full px-4 py-3 rounded-xl border border-warm-gray bg-white focus:border-champagne focus:ring-2 focus:ring-champagne/20 outline-none transition-all text-soft-gray"
-                  />
+                <div className="flex items-center gap-4">
+                  <div className="flex-1 h-px bg-warm-gray" />
+                  <span className="text-soft-gray/40 text-sm">or</span>
+                  <div className="flex-1 h-px bg-warm-gray" />
                 </div>
 
-                <div>
-                  <label className="flex items-center gap-2 text-soft-gray text-sm font-medium mb-2">
-                    <MessageSquare className="w-4 h-4 text-champagne" />
-                    Message (optional)
-                  </label>
-                  <textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    placeholder="Write a sweet message..."
-                    rows={3}
-                    className="w-full px-4 py-3 rounded-xl border border-warm-gray bg-white focus:border-champagne focus:ring-2 focus:ring-champagne/20 outline-none transition-all text-soft-gray resize-none"
-                  />
-                </div>
-              </div>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full py-6 bg-gradient-to-r from-blush/20 to-champagne/20 rounded-2xl border-2 border-dashed border-champagne/40 hover:border-champagne transition-colors flex flex-col items-center gap-3 group"
+                >
+                  <div className="w-14 h-14 bg-blush/50 rounded-full flex items-center justify-center group-hover:bg-blush transition-colors">
+                    <Upload className="w-7 h-7 text-champagne" />
+                  </div>
+                  <span className="text-soft-gray font-medium">Upload from Device</span>
+                  <span className="text-soft-gray/40 text-xs">JPG, PNG up to 5MB each · Multiple allowed</span>
+                </button>
+              </>
+            )}
 
-              <button
-                onClick={handleUpload}
-                disabled={isUploading}
-                className="w-full py-4 bg-champagne text-white rounded-xl font-medium hover:shadow-lg hover:shadow-champagne/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isUploading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Uploading... {uploadProgress}%
-                  </>
-                ) : showSuccess ? (
-                  <>
-                    <Check className="w-5 h-5" />
-                    Uploaded Successfully!
-                  </>
-                ) : (
-                  <>
-                    <Heart className="w-5 h-5" />
-                    Share Photo
-                  </>
+            {/* Photo grid */}
+            {hasImages && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-3 gap-3">
+                  {selectedImages.map((img) => (
+                    <motion.div
+                      key={img.id}
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="relative aspect-square rounded-xl overflow-hidden"
+                    >
+                      <img
+                        src={img.previewUrl}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => removeImage(img.id)}
+                        className="absolute top-1 right-1 p-1 bg-black/60 rounded-full text-white hover:bg-black/80 transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </motion.div>
+                  ))}
+
+                  {/* Add more tile */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="aspect-square rounded-xl border-2 border-dashed border-champagne/40 hover:border-champagne bg-champagne/5 hover:bg-champagne/10 transition-colors flex flex-col items-center justify-center gap-1 group"
+                  >
+                    <Plus className="w-6 h-6 text-champagne/60 group-hover:text-champagne transition-colors" />
+                    <span className="text-xs text-soft-gray/40 group-hover:text-soft-gray/60 transition-colors">Add more</span>
+                  </button>
+                </div>
+
+                <p className="text-center text-soft-gray/50 text-sm">
+                  {selectedImages.length} photo{selectedImages.length > 1 ? 's' : ''} selected
+                </p>
+
+                {/* Name & message fields */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="flex items-center gap-2 text-soft-gray text-sm font-medium mb-2">
+                      <User className="w-4 h-4 text-champagne" />
+                      Your Name (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={guestName}
+                      onChange={(e) => setGuestName(e.target.value)}
+                      placeholder="Enter your name"
+                      className="w-full px-4 py-3 rounded-xl border border-warm-gray bg-white focus:border-champagne focus:ring-2 focus:ring-champagne/20 outline-none transition-all text-soft-gray"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="flex items-center gap-2 text-soft-gray text-sm font-medium mb-2">
+                      <MessageSquare className="w-4 h-4 text-champagne" />
+                      Message (optional)
+                    </label>
+                    <textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      placeholder="Write a sweet message..."
+                      rows={3}
+                      className="w-full px-4 py-3 rounded-xl border border-warm-gray bg-white focus:border-champagne focus:ring-2 focus:ring-champagne/20 outline-none transition-all text-soft-gray resize-none"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleUpload}
+                  disabled={isUploading}
+                  className="w-full py-4 bg-champagne text-white rounded-xl font-medium hover:shadow-lg hover:shadow-champagne/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isUploading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Uploading... {uploadProgress}%
+                    </>
+                  ) : showSuccess ? (
+                    <>
+                      <Check className="w-5 h-5" />
+                      Uploaded Successfully!
+                    </>
+                  ) : (
+                    <>
+                      <Heart className="w-5 h-5" />
+                      Share {selectedImages.length} Photo{selectedImages.length > 1 ? 's' : ''}
+                    </>
+                  )}
+                </button>
+
+                {isUploading && (
+                  <div className="w-full h-2 bg-warm-gray/30 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-champagne rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${uploadProgress}%` }}
+                      transition={{ duration: 0.3 }}
+                    />
+                  </div>
                 )}
-              </button>
+              </div>
+            )}
+          </div>
 
-              {isUploading && (
-                <div className="w-full h-2 bg-warm-gray/30 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-champagne rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${uploadProgress}%` }}
-                    transition={{ duration: 0.3 }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+          />
         </motion.div>
 
+        {/* Success overlay */}
         <AnimatePresence>
           {showSuccess && (
             <motion.div
@@ -414,7 +455,7 @@ const UploadPage = () => {
                   </div>
                 </motion.div>
                 <h3 className="font-serif text-2xl text-soft-gray mb-2">Thank You!</h3>
-                <p className="text-soft-gray/60">Your photo has been added to our gallery</p>
+                <p className="text-soft-gray/60">Your photos have been added to our gallery</p>
               </div>
             </motion.div>
           )}
