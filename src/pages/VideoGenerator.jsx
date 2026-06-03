@@ -15,6 +15,7 @@ const VideoGenerator = () => {
   const [musicDuration, setMusicDuration] = useState(180)
   const canvasRef = useRef(null)
   const videoRef = useRef(null)
+  const progressRef = useRef(0)
 
   const MUSIC_URL = "https://res.cloudinary.com/db4bcdoce/video/upload/v1780425640/Cant_Help_Falling_In_Love_Instrumental_Wedding_March_ucjcso.mp3"
 
@@ -51,7 +52,8 @@ const VideoGenerator = () => {
     return Math.max(3000, Math.min(8000, perPhoto + 1500))
   }
 
-  const photoDuration = getPhotoDuration()
+  // Fixed 4 seconds per photo
+  const photoDuration = 3000
   const totalVideoDuration = allPhotos.length * photoDuration
 
   const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
@@ -216,8 +218,8 @@ const VideoGenerator = () => {
     try {
       const canvas = canvasRef.current
       const ctx = canvas.getContext('2d')
-      const width = 1280
-      const height = 720
+      const width = 960
+      const height = 540
       canvas.width = width
       canvas.height = height
 
@@ -241,7 +243,7 @@ const VideoGenerator = () => {
       }
 
       const videoDuration = validImages.length * photoDuration
-      const transitionDuration = 1200
+      const transitionDuration = 800
       const transitionTypes = validImages.map((_, i) => TRANSITIONS[i % TRANSITIONS.length])
 
       let combinedStream = null
@@ -257,7 +259,7 @@ const VideoGenerator = () => {
         const destination = audioContext.createMediaStreamDestination()
         sourceNode.connect(destination)
         sourceNode.connect(audioContext.destination)
-        const canvasStream = canvas.captureStream(30)
+        const canvasStream = canvas.captureStream(24)
         destination.stream.getAudioTracks().forEach(track => canvasStream.addTrack(track))
         combinedStream = canvasStream
         await audioElement.play()
@@ -267,10 +269,10 @@ const VideoGenerator = () => {
       }
 
       const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm;codecs=vp9,opus',
-        videoBitsPerSecond: 6000000,
-        audioBitsPerSecond: 128000,
-      })
+  mimeType: 'video/webm;codecs=vp8,opus',
+  videoBitsPerSecond: 3000000,
+  audioBitsPerSecond: 128000,
+})
 
       const chunks = []
       mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
@@ -292,7 +294,13 @@ const VideoGenerator = () => {
       const animate = () => {
         const elapsed = Date.now() - startTime
         const currentProgress = Math.min((elapsed / videoDuration) * 100, 100)
-        setProgress(Math.round(currentProgress))
+
+const roundedProgress = Math.round(currentProgress)
+
+if (roundedProgress !== progressRef.current) {
+  progressRef.current = roundedProgress
+  setProgress(roundedProgress)
+}
 
         if (elapsed >= videoDuration) {
           mediaRecorder.stop()
@@ -352,8 +360,8 @@ const VideoGenerator = () => {
           ctx.fillStyle = `rgba(255, 255, 255, ${titleAlpha})`
           ctx.font = 'bold 58px "Playfair Display", Georgia, serif'
           ctx.textAlign = 'center'
-          ctx.shadowColor = 'rgba(0,0,0,0.8)'
-          ctx.shadowBlur = 24
+          ctx.shadowColor = 'rgba(0,0,0,0.4)'
+          ctx.shadowBlur = 8
           ctx.fillText('Mr & Mrs De Vera', width / 2, height / 2 - 8)
           ctx.shadowBlur = 0
 
